@@ -59,32 +59,38 @@ void load_forbidden(const char *path) {
 }
 
 // Sends a simple HTTP error response to client
-void send_error(int client_fd, int status, const char *msg) {
+void send_error(int client_fd, const char *client_ip, const char *request_line, int status, const char *msg) {
     char buf[MAXLINE];
     snprintf(buf, sizeof(buf),
              "HTTP/1.1 %d %s\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n%s\n",
              status, msg, strlen(msg) + 1, msg);
     write(client_fd, buf, strlen(buf));
+    log_request(client_ip, request_line, status, 0);
 }
 
 // Thread handler for each incoming client connection
 void *handle_client(void *arg) {
-    int client_fd = *(int *)arg;
+    int client_fd = ((int *)arg)[0];
+    struct sockaddr_in cliaddr = *((struct sockaddr_in *)(&((int *)arg)[1]));
     free(arg);
+
+    char client_ip[INET_ADDRSTRLEN] = "unknown";
+    inet_ntop(AF_INET, &cliaddr.sin_addr, client_ip, sizeof(client_ip));
 
     char buf[MAXLINE], method[16], url[1024], version[16];
     char host[256] = "", path[1024] = "/";
+    char original_request_line[MAXLINE] = "";
 
     FILE *client_fp = fdopen(client_fd, "r+");
     if (!client_fp) { close(client_fd); return NULL; }
 
     if (!fgets(buf, MAXLINE, client_fp)) { fclose(client_fp); return NULL; }
+    strncpy(original_request_line, buf, MAXLINE);
     sscanf(buf, "%s %s %s", method, url, version);
 
     // Only support GET and HEAD methods
     if (strcmp(method, "GET") && strcmp(method, "HEAD")) {
-        send_error(client_fd, 501, "Not Implemented");
-        log_request("unknown", buf, 501, 0);
+        send_error(client_fd, client_ip, original_request_line, 501, "Not Implemented");
         fclose(client_fp); return NULL;
     }
 
@@ -101,15 +107,13 @@ void *handle_client(void *arg) {
             strcpy(host, host_start);
         }
     } else {
-        send_error(client_fd, 400, "Bad Request");
-        log_request("unknown", buf, 400, 0);
+        send_error(client_fd, client_ip, original_request_line, 400, "Bad Request");
         fclose(client_fp); return NULL;
     }
 
     // Block access to forbidden hosts
     if (is_forbidden(host)) {
-        send_error(client_fd, 403, "Forbidden URL");
-        log_request("unknown", buf, 403, 0);
+        send_error(client_fd, client_ip, original_request_line, 403, "Forbidden URL");
         fclose(client_fp); return NULL;
     }
 
@@ -119,23 +123,22 @@ void *handle_client(void *arg) {
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(host, "80", &hints, &res) != 0) {
-        send_error(client_fd, 502, "Bad Gateway");
-        log_request("unknown", buf, 502, 0);
+        send_error(client_fd, client_ip, original_request_line, 502, "Bad Gateway");
         fclose(client_fp); return NULL;
     }
 
     int server_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
     if (connect(server_fd, res->ai_addr, res->ai_addrlen) != 0) {
-        send_error(client_fd, 504, "Gateway Timeout");
-        log_request("unknown", buf, 504, 0);
-        fclose(client_fp); freeaddrinfo(res); return NULL;
+        freeaddrinfo(res);
+        send_error(client_fd, client_ip, original_request_line, 504, "Gateway Timeout");
+        fclose(client_fp); return NULL;
     }
 
     freeaddrinfo(res);
 
     // Build and send request to destination server
     char request[MAXLINE];
-    snprintf(request, sizeof(request), "%s %s %s\r\nHost: %s\r\nX-Forwarded-For: 127.0.0.1\r\nConnection: close\r\n\r\n", method, path, version, host);
+    snprintf(request, sizeof(request), "%s %s %s\r\nHost: %s\r\nX-Forwarded-For: %s\r\nConnection: close\r\n\r\n", method, path, version, host, client_ip);
     write(server_fd, request, strlen(request));
 
     // Relay response from server back to client
@@ -147,7 +150,7 @@ void *handle_client(void *arg) {
         write(client_fd, buf, n);
     }
 
-    log_request("127.0.0.1", buf, 200, total_bytes);
+    log_request(client_ip, original_request_line, 200, total_bytes);
 
     close(server_fd);
     fclose(client_fp);
@@ -159,7 +162,7 @@ int main(int argc, char **argv) {
     char *forbidden_path = NULL;
     char *log_file_path_local = NULL;
 
-    // argument parsing
+    // Manual argument parsing
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
             port = atoi(argv[++i]);
@@ -196,13 +199,14 @@ int main(int argc, char **argv) {
     while (1) {
         struct sockaddr_in cliaddr;
         socklen_t len = sizeof(cliaddr);
-        int *connfd = malloc(sizeof(int));
-        *connfd = accept(listen_fd, (struct sockaddr *)&cliaddr, &len);
+        int connfd = accept(listen_fd, (struct sockaddr *)&cliaddr, &len);
+        int *arg = malloc(sizeof(int) + sizeof(struct sockaddr_in));
+        arg[0] = connfd;
+        memcpy(&arg[1], &cliaddr, sizeof(struct sockaddr_in));
         pthread_t tid;
-        pthread_create(&tid, NULL, handle_client, connfd);
+        pthread_create(&tid, NULL, handle_client, arg);
         pthread_detach(tid);
     }
 
     return 0;
 }
-
