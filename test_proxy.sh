@@ -1,30 +1,35 @@
 #!/bin/bash
 
+# test_proxy.sh - automated tests for myproxy
+
 PROXY_PORT=8080
-PROXY_ADDR="http://127.0.0.1:$PROXY_PORT"
-ACCESS_LOG="doc/access.log"
-FORBIDDEN_FILE="doc/forbidden.txt"
+PROXY_HOST=127.0.0.1
+FORBIDDEN_FILE=forbidden.txt
+LOG_FILE=access.log
 
-echo "[*] Starting test suite..."
+# Wait for proxy to be ready
+sleep 1
 
-# 1. Test: Simple GET request to allowed site
-echo "[1] Testing allowed GET request..."
-curl -x $PROXY_ADDR -s -o /dev/null -w "%{http_code}\n" http://example.com
+# Clear previous logs
+rm -f "$LOG_FILE"
 
-# 2. Test: HEAD request to allowed site
-echo "[2] Testing allowed HEAD request..."
-curl -I -x $PROXY_ADDR -s -o /dev/null -w "%{http_code}\n" http://example.com
+# Test 1: Simple GET request
+curl -x http://$PROXY_HOST:$PROXY_PORT http://example.com/ -o /dev/null -s -w "Test 1 (GET example.com): %{http_code}\n"
 
-# 3. Test: Forbidden site
-echo "[3] Testing forbidden site (should return 403)..."
-curl -x $PROXY_ADDR -s -o /dev/null -w "%{http_code}\n" http://fakenews.com
+# Test 2: Simple HEAD request
+curl -I -x http://$PROXY_HOST:$PROXY_PORT http://example.com/ -s -o /dev/null -w "Test 2 (HEAD example.com): %{http_code}\n"
 
-# 4. Test: Invalid HTTP method
-echo "[4] Testing POST (should return 501)..."
-curl -X POST -x $PROXY_ADDR -s -o /dev/null -w "%{http_code}\n" http://example.com
+# Test 3: Forbidden site (should return 403)
+echo "www.fakenews.com" > $FORBIDDEN_FILE
+curl -x http://$PROXY_HOST:$PROXY_PORT http://fakenews.com/ -o /dev/null -s -w "Test 3 (GET forbidden site): %{http_code}\n"
 
-# 5. Test: Unresolvable domain
-echo "[5] Testing bad domain (should return 502)..."
-curl -x $PROXY_ADDR -s -o /dev/null -w "%{http_code}\n" http://nonexistent12345.ucsc
+# Test 4: Bad method (POST)
+curl -X POST -x http://$PROXY_HOST:$PROXY_PORT http://example.com/ -o /dev/null -s -w "Test 4 (POST method): %{http_code}\n"
 
-echo "[*] Tests complete. Check $ACCESS_LOG for log output."
+# Test 5: Non-existent domain (should return 502)
+curl -x http://$PROXY_HOST:$PROXY_PORT http://nonexistent12345.ucsc/ -o /dev/null -s -w "Test 5 (bad DNS): %{http_code}\n"
+
+# Test 6: CONNECT method (should return 501)
+echo -e "CONNECT www.example.com:443 HTTP/1.1\r\nHost: www.example.com:443\r\n\r\n" \
+    | nc $PROXY_HOST $PROXY_PORT | head -n 1 | grep -q "501" && \
+    echo "Test 6 (CONNECT method): 501" || echo "Test 6 (CONNECT method): Failed"
