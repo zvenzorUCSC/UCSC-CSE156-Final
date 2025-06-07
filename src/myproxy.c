@@ -1,3 +1,5 @@
+// myproxy.c - HTTP proxy server (manual argument parsing, standard libraries only)
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,7 +113,7 @@ void *handle_client(void *arg) {
         fclose(client_fp); return NULL;
     }
 
-    // Connect to destination web server using HTTP (not HTTPS)
+    // Connect to destination web server using HTTP (port 80)
     struct addrinfo hints = {0}, *res;
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -153,26 +155,30 @@ void *handle_client(void *arg) {
 }
 
 int main(int argc, char **argv) {
-    int opt, port = 0;
+    int port = 0;
     char *forbidden_path = NULL;
+    char *log_file_path_local = NULL;
 
-    // Parse command-line arguments
-    while ((opt = getopt(argc, argv, "p:a:l:")) != -1) {
-        switch (opt) {
-            case 'p': port = atoi(optarg); break;
-            case 'a': forbidden_path = optarg; break;
-            case 'l': log_file_path = optarg; break;
-            default:
-                fprintf(stderr, "Usage: %s -p port -a forbidden.txt -l access.log\n", argv[0]);
-                exit(1);
+    // argument parsing
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+            port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
+            forbidden_path = argv[++i];
+        } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            log_file_path_local = argv[++i];
+        } else {
+            fprintf(stderr, "Unknown or incomplete option: %s\n", argv[i]);
+            exit(1);
         }
     }
 
-    if (!port || !forbidden_path || !log_file_path) {
-        fprintf(stderr, "Missing required arguments\n");
+    if (!port || !forbidden_path || !log_file_path_local) {
+        fprintf(stderr, "Usage: %s -p <port> -a <forbidden.txt> -l <access.log>\n", argv[0]);
         exit(1);
     }
 
+    log_file_path = log_file_path_local;
     load_forbidden(forbidden_path);
 
     // Setup TCP listener
@@ -199,3 +205,4 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
