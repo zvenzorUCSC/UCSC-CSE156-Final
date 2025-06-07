@@ -1,5 +1,0 @@
-www.bookface.com
-www.utube.com
-www.fakenews.com
-# comment line start with # and ends with \n
-10.6.6.6
