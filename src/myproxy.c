@@ -51,8 +51,6 @@ int is_forbidden(const char *host) {
     }
     return 0;
 }
-    return 0;
-}
 
 // Loads forbidden sites from file into memory
 void load_forbidden(const char *path) {
