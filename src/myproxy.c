@@ -40,8 +40,17 @@ void log_request(const char *client_ip, const char *request_line, int status, in
 // Checks if the given host is in the forbidden list
 int is_forbidden(const char *host) {
     for (int i = 0; i < forbidden_count; i++) {
-        if (strcmp(forbidden_sites[i], host) == 0) return 1;
+        const char *forb = forbidden_sites[i];
+
+        // Exact match
+        if (strcmp(forb, host) == 0) return 1;
+
+        // Normalize www prefix
+        if (strncmp(host, "www.", 4) == 0 && strcmp(host + 4, forb) == 0) return 1;
+        if (strncmp(forb, "www.", 4) == 0 && strcmp(forb + 4, host) == 0) return 1;
     }
+    return 0;
+}
     return 0;
 }
 
@@ -86,7 +95,6 @@ void *handle_client(void *arg) {
 
     if (!fgets(buf, MAXLINE, client_fp)) { fclose(client_fp); return NULL; }
     strncpy(original_request_line, buf, MAXLINE);
-    original_request_line[strcspn(original_request_line, "\r\n")] = '\0';  // remove newline
     sscanf(buf, "%s %s %s", method, url, version);
 
     // Only support GET and HEAD methods
